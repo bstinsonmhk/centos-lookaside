@@ -1,0 +1,113 @@
+CentOS Infra lookaside upload script
+
+This upload script is a fork of Fedora's.  The original version of the script was taken from https://git.fedorahosted.org/cgit/fedora-infrastructure.git/tree/scripts/upload.cgi (although I think that version might be a bit on the old side, but it does the job).
+
+The script has been modified somewhat (ok, quite a lot) to fit CentOS' requirements.
+
+
+Requirements:
+
+Basic requirements from kbsingh et al:
+
+- Users must be authenticated to be able to upload
+- Authentication must be done using client SSL certificates from a private CA
+- Files must be uploaded in the centos <package>/<branch>/<sha1sum> scheme, rather than the fedora scheme
+- The upload process must be able to be driven from centpkg (so ideally similar script/parameters to fedora)
+- Upload permissions must be controlled from the gitblit config
+
+Some more requirements of mine:
+
+- The upload system must check for revocation of client certs
+- Client cert revocation should be done quickly (immediately if possible)
+
+
+Assumptions:
+
+- Every user who can upload has a unique username.
+- Every user has an account in git.centos.org's gitblit.
+- Every user has a client SSL certificate, issued by the CBS CA.
+- The client SSL certificate has a CN of their username as part of the certificate subject.
+- A users git username matches their koji username.
+
+
+Access Control:
+
+The script requires a user to authenticate with their client SSL cert.  All users can run the script in check mode.  If a user tries to upload, the script checks the gitblit config to ensure that the user has permissions to the package.
+
+(This access control can be disabled using the script config file, if desired)
+
+
+Apache SSL Configuration:
+
+The following config is sufficient for the SSL client auth:
+
+  # This needs to point to the CA cert that issued the client certs
+  SSLCACertificateFile /etc/pki/tls/certs/cbs-ca.crt
+
+  # Don't verify client certs on the server by default
+  SSLVerifyClient none
+
+  # Tell Apache the upload script is CGI
+  ScriptAlias /lookaside/upload.cgi /var/www/cgi-bin/upload.cgi
+
+  # Enable client cert verification for the upload script URL
+  <Location /lookaside/upload.cgi>
+          SSLVerifyClient require
+          SSLVerifyDepth 1
+  </Location>
+
+Ideally we want to check for client cert revocation.  We can check a local CRL file with the following config.  Note that if the CRL is updated, Apache needs to be restarted to pick up the changes.
+
+  # check revocation of client certs against the CRL
+  SSLCARevocationCheck leaf
+  # specify the CRL file location (must be in PEM format)
+  SSLCARevocationFile /etc/pki/tls/certs/ipa.crl
+
+If at some point we switch to a CA with an OCSP responder, we can use the following config (Apache 2.4 required) to do a live OCSP client cert revocation check on upload:
+
+  # turn on OCSP checking of client certs
+  SSLOCSPEnable on
+  # set the URL for the OCSP responder
+  SSLOCSPDefaultResponder http://my.ca.server/ca/ocsp
+  # ignore the OCSP URL in client certs and use the one we configured
+  SSLOCSPOverrideResponder on
+
+
+Calling The Script:
+
+Obviously, you need a valid client cert.  You then need to call the script with the right parameters.  Here's the parameters:
+
+- name
+- branch
+- sha1sum
+- file
+
+name, branch, and sha1sum are mandatory.  name is the package name.  branch is the name of the branch.  sha1sum is a (lowercase) hex SHA1 checksum for the file.  If only these three parameters are provided, the script checks if there is a matching file uploaded.  If the file exists, the script returns the string "Available".  If the file does not exist, the script returns the string "Missing".
+
+If the parameter file is passed, this parameter must be the contents of the file.  The uploaded file will be written to a temporary file, and the checksum of the file compared to the value of the sha1sum parameter.  If the sums match, the file is moved into position.
+
+The script can be called using curl commands similar to the following.  The file mycert.pem contains the client's cert (and private key).
+
+To upload a file (389-ds-base-1.3.1.6.tar.bz2 in the current directory):
+
+curl --cert ./mycert.pem https://git.centos.org/lookaside/upload.cgi --form "name=389-ds-base" --form "branch=c7" --form "sha1sum=ce4e6293a996e1045bc8f75533418f3172b391ee" --form "file=@389-ds-base-1.3.1.6.tar.bz2"
+File 389-ds-base-1.3.1.6.tar.bz2 size 3070988 SHA1 ce4e6293a996e1045bc8f75533418f3172b391ee stored OK
+
+To check if a file exists:
+
+curl --cert ./mycert.pem https://git.centos.org/lookaside/upload.cgi --form "name=389-ds-base" --form "branch=c7" --form "sha1sum=ce4e6293a996e1045bc8f75533418f3172b391ee"
+Available
+
+(on a normal end client, this would be handled by centpkg)
+
+(centos' curl defaults to looking in a NSS db for a client cert; force the --cert arg to be a path - even a relative one like ./mycert.pem - to stop this behaviour)
+
+
+Email Notification:
+
+The script sends an email to a configured email address when a file is uploaded.  The script tries to send the mail via a configured mail relay.  By default, SELinux will block the script from connecting to port 25 on the configured mail server.  Set the httpd_can_network_connect boolean on to allow it.
+
+
+Script Config File:
+
+The upload script config file is /etc/lookaside.cfg.  There are config options for all the interesting values.  The script doesn't check the config syntax is correct, so missing / malformed values are likely to case python tracebacks.
