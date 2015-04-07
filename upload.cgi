@@ -30,6 +30,7 @@ import tempfile
 import syslog
 import smtplib
 import re
+import fnmatch
 from ConfigParser import SafeConfigParser
 
 from email import Header, Utils
@@ -50,7 +51,7 @@ conf.read(CONFIG)
 BUFFER_SIZE = 4096
 
 # Gitblit config file regexes
-SECTION = re.compile(r'\[(.+)\]')
+SECTION = re.compile(r'\[(?P<sectiontype>.+?)\s+?(?P<sectionname>.+)\]')
 OPTION = re.compile(r'(.+)=(.+)')
 REPO = re.compile(r'([^/]+).git$')
 
@@ -62,48 +63,84 @@ def merge_gitblit_section(repoacl, repos, users):
             if user not in repoacl[repo]:
                 repoacl[repo].append(user)
 
-# turns the gitblit config file into a dict of package name to permitted users
-def parse_gitblit_config(filename):
-    insection = False
-    repoacl = {}
-    sectrepos = []
-    sectusers = []
+def stripwithquotes(thestring):
+    return thestring.strip('\" \n')
 
-    f = open(filename)
-    for line in f:
-        if line.strip() == '' or line[0] == '#':
-            continue
-        secth = SECTION.match(line)
-        if secth:
-            if insection:
-                merge_gitblit_section(repoacl, sectrepos, sectusers)
 
-                sectrepos = []
-                sectusers = []
-            else:
-                insection = True
-            continue
-        opt = OPTION.match(line)
-        if opt:
-            if not insection:
+# Parse the authtags in the form "Gitblit Team Name":branch_or_branch_regex
+def gitblit_branch_to_team(filename):
+    branches = {}
+
+    with open(filename, 'r') as authtagfile:
+        for line in authtagfile:
+            # Ignore comments
+            if line.strip() == '' or line[0] == '#':
                 continue
-            key = opt.group(1).strip()
-            value = opt.group(2).strip()
 
-            if key == "repository":
-                pack = REPO.search(value)
-                if pack:
-                    sectrepos.append(pack.group(1))
-            elif key == "user":
-                sectusers.append(value)
-    if insection:
-        merge_gitblit_section(repoacl, sectrepos, sectusers)
-    f.close()
-    return repoacl
+            try:
+                team, branch = map(stripwithquotes, line.split(':'))
+            except ValueError:
+                # There was trouble splitting the lines, meaning something in
+                # the config is wrong, ignore this line
+                continue
+            branches.setdefault(branch,[]).append(team)
+
+    return branches
+
+# Parse the gitblit user/team definitions (and other things) and stuff it into a
+# dictionary
+def parse_gitblit_config(filename):
+    config = {}
+    with open(filename, 'r') as configfile:
+        for line in configfile:
+            # Ignore comments
+            if line.strip() == '' or line[0] == '#':
+                continue
+
+            section = SECTION.match(line.strip())
+            if section:
+                section_type,section_name = section.groupdict().values()
+                section_name = stripwithquotes(section_name)
+                config.setdefault(section_type,{}).setdefault(section_name,{})
+                continue
+
+            option = OPTION.match(line.strip())
+            if option:
+                key = option.group(1).strip()
+                value = option.group(2).strip()
+                config[section_type][section_name].setdefault(key, []).append(value)
+    return config
+
 
 def send_error(text):
     print text
     sys.exit(1)
+
+def check_auth(username, pkgname, branchname):
+    config = parse_gitblit_config(conf.get('acl', 'gitblit_config'))
+
+    auth_tags = gitblit_branch_to_team(conf.get('acl', 'auth_tag_config'))
+
+    branchacl = []
+    # The ACL might be defined by a glob, search for the right entry here
+    matching_acls = [acl_match for acl_match in auth_tags if fnmatch.fnmatch(branchname, acl_match)]
+    print >> sys.stderr, matching_acls
+
+    possible_groups = []
+    for acl in matching_acls:
+        # If _any_ of the protected-branch ACLs match our branch name bail
+        # out quickly
+        if 'None' in auth_tags[acl]:
+            return False
+        possible_groups.extend(auth_tags[acl])
+
+    for group in possible_groups:
+        try:
+            if username in config['team'][group]['user']:
+                return True
+        except KeyError:
+            print >> sys.stderr, '[group={0}] group or user entries do not exist'.format(group)
+    return False
 
 def check_form(form, var):
     ret = form.getvalue(var, None)
@@ -185,16 +222,12 @@ def main():
 
     # if desired, make sure the user has permission to write to this branch
     if conf.getboolean('acl', 'do_acl'):
-        # load in the gitblit config
-        repoacl = parse_gitblit_config(conf.get('acl', 'gitblit_config'))
-
-        # if the package isn't in the gitblit config, we can't give upload perms
-        if name not in repoacl:
-            send_error("Unknown package %s" % name)
-
-        # now check the perms
-        if username not in repoacl[name]:
-            send_error("Write access package %s rejected for user %s" % (name, username))
+        if not check_auth(username, branch):
+            print 'Status: 403 Forbidden'
+            print 'Content-type: text/plain'
+            print
+            print 'You must connect with a valid certificate and have permissions on the appropriate branch to upload'
+            sys.exit(0)
 
     # check that all directories are in place
     if not os.path.isdir(module_dir):
