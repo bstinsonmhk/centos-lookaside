@@ -142,6 +142,26 @@ def check_auth(username, pkgname, branchname):
             print >> sys.stderr, '[group={0}] group or user entries do not exist'.format(group)
     return False
 
+def get_memberships(username):
+    import requests
+    import json
+    httpresponse = requests.post(conf.get('acls','fas_url'),
+                                 {'user_name': conf.get('acls','fas_username'),
+                                  'password':  conf.get('acls','fas_password'),
+                                  'login':     'Login',
+                                  'search':    username,
+                                  'fields':
+                                  ['username','group_roles']})
+
+    if httpresponse.status_code >= 400:
+        return False
+
+    jsonresponse = json.loads(httpresponse.text)
+    usermodel = jsonresponse['people'].extend(jsonresponse['unapproved_people'])[0]
+
+    return usermodel.group_roles
+
+
 def check_form(form, var):
     ret = form.getvalue(var, None)
     if ret is None:
