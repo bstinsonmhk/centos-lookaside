@@ -158,7 +158,7 @@ def get_memberships(username):
                                   ['username','group_roles']})
 
     if httpresponse.status_code >= 400:
-        return False
+        return None
 
     jsonresponse = json.loads(httpresponse.text)
     usermodel = jsonresponse['people'].extend(jsonresponse['unapproved_people'])[0]
