@@ -116,10 +116,14 @@ def send_error(text):
     print text
     sys.exit(1)
 
-def check_auth(username, pkgname, branchname):
-    config = parse_gitblit_config(conf.get('acl', 'gitblit_config'))
+def check_auth(username, branchname, groupmemberships=None):
 
-    auth_tags = gitblit_branch_to_team(conf.get('acl', 'auth_tag_config'))
+    if groupmemberships is None:
+        groupmemberships = get_memberships(username)
+
+    for group in groupmemberships:
+        if re.match("{0}.*".format(group), branchname):
+            return True
 
     branchacl = []
     # The ACL might be defined by a glob, search for the right entry here
@@ -145,7 +149,7 @@ def check_auth(username, pkgname, branchname):
 def get_memberships(username):
     import requests
     import json
-    httpresponse = requests.post(conf.get('acls','fas_url'),
+    httpresponse = requests.post(conf.get('acls','fas_url')+'user/list',
                                  {'user_name': conf.get('acls','fas_username'),
                                   'password':  conf.get('acls','fas_password'),
                                   'login':     'Login',
@@ -194,12 +198,12 @@ def send_email(pkg, sha1, filename, username):
 def main():
     os.umask(002)
 
-    username = os.environ.get('SSL_CLIENT_S_DN_CN', None)
+    username = os.environ.get('HTTP_X_LOOKASIDE_CN', '')
 
     print 'Content-Type: text/plain'
     print
 
-    assert os.environ['REQUEST_URI'].split('/')[1] == 'lookaside'
+    assert os.environ['REQUEST_URI'].split('/')[1] == 'sources'
 
     form = cgi.FieldStorage()
     name = check_form(form, 'name')
@@ -241,7 +245,7 @@ def main():
         sys.exit(0)
 
     # if desired, make sure the user has permission to write to this branch
-    if conf.getboolean('acl', 'do_acl'):
+    if conf.getboolean('acls', 'do_acl'):
         if not check_auth(username, branch):
             print 'Status: 403 Forbidden'
             print 'Content-type: text/plain'
