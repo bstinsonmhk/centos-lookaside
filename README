@@ -4,75 +4,6 @@ This upload script is a fork of Fedora's.  The original version of the script wa
 
 The script has been modified somewhat (ok, quite a lot) to fit CentOS' requirements.
 
-
-Requirements:
-
-Basic requirements from kbsingh et al:
-
-- Users must be authenticated to be able to upload
-- Authentication must be done using client SSL certificates from a private CA
-- Files must be uploaded in the centos <package>/<branch>/<sha1sum> scheme, rather than the fedora scheme
-- The upload process must be able to be driven from centpkg (so ideally similar script/parameters to fedora)
-- Upload permissions must be controlled from the gitblit config
-
-Some more requirements of mine:
-
-- The upload system must check for revocation of client certs
-- Client cert revocation should be done quickly (immediately if possible)
-
-
-Assumptions:
-
-- Every user who can upload has a unique username.
-- Every user has an account in git.centos.org's gitblit.
-- Every user has a client SSL certificate, issued by the CBS CA.
-- The client SSL certificate has a CN of their username as part of the certificate subject.
-- A users git username matches their koji username.
-
-
-Access Control:
-
-The script requires a user to authenticate with their client SSL cert.  All users can run the script in check mode.  If a user tries to upload, the script checks the gitblit config to ensure that the user has permissions to the package.
-
-(This access control can be disabled using the script config file, if desired)
-
-
-Apache SSL Configuration:
-
-The following config is sufficient for the SSL client auth:
-
-  # This needs to point to the CA cert that issued the client certs
-  SSLCACertificateFile /etc/pki/tls/certs/cbs-ca.crt
-
-  # Don't verify client certs on the server by default
-  SSLVerifyClient none
-
-  # Tell Apache the upload script is CGI
-  ScriptAlias /lookaside/upload.cgi /var/www/cgi-bin/upload.cgi
-
-  # Enable client cert verification for the upload script URL
-  <Location /lookaside/upload.cgi>
-          SSLVerifyClient require
-          SSLVerifyDepth 1
-  </Location>
-
-Ideally we want to check for client cert revocation.  We can check a local CRL file with the following config.  Note that if the CRL is updated, Apache needs to be restarted to pick up the changes.
-
-  # check revocation of client certs against the CRL
-  SSLCARevocationCheck leaf
-  # specify the CRL file location (must be in PEM format)
-  SSLCARevocationFile /etc/pki/tls/certs/ipa.crl
-
-If at some point we switch to a CA with an OCSP responder, we can use the following config (Apache 2.4 required) to do a live OCSP client cert revocation check on upload:
-
-  # turn on OCSP checking of client certs
-  SSLOCSPEnable on
-  # set the URL for the OCSP responder
-  SSLOCSPDefaultResponder http://my.ca.server/ca/ocsp
-  # ignore the OCSP URL in client certs and use the one we configured
-  SSLOCSPOverrideResponder on
-
-
 Calling The Script:
 
 Obviously, you need a valid client cert.  You then need to call the script with the right parameters.  Here's the parameters:
@@ -90,12 +21,12 @@ The script can be called using curl commands similar to the following.  The file
 
 To upload a file (389-ds-base-1.3.1.6.tar.bz2 in the current directory):
 
-curl --cert ./mycert.pem https://git.centos.org/lookaside/upload.cgi --form "name=389-ds-base" --form "branch=c7" --form "sha1sum=ce4e6293a996e1045bc8f75533418f3172b391ee" --form "file=@389-ds-base-1.3.1.6.tar.bz2"
+curl --cert ./mycert.pem https://git.centos.org/sources/upload.cgi --form "name=389-ds-base" --form "branch=c7" --form "sha1sum=ce4e6293a996e1045bc8f75533418f3172b391ee" --form "file=@389-ds-base-1.3.1.6.tar.bz2"
 File 389-ds-base-1.3.1.6.tar.bz2 size 3070988 SHA1 ce4e6293a996e1045bc8f75533418f3172b391ee stored OK
 
 To check if a file exists:
 
-curl --cert ./mycert.pem https://git.centos.org/lookaside/upload.cgi --form "name=389-ds-base" --form "branch=c7" --form "sha1sum=ce4e6293a996e1045bc8f75533418f3172b391ee"
+curl --cert ./mycert.pem https://git.centos.org/sources/upload.cgi --form "name=389-ds-base" --form "branch=c7" --form "sha1sum=ce4e6293a996e1045bc8f75533418f3172b391ee"
 Available
 
 (on a normal end client, this would be handled by centpkg)
