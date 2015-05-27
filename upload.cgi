@@ -122,28 +122,18 @@ def check_auth(username, branchname, groupmemberships=None):
         groupmemberships = get_memberships(username)
 
     for group in groupmemberships:
+        if not group.startswith('sig'):
+            # The group list we get back doesn't include any status/type
+            # information. For now ignore all groups that don't start with 'sig'
+            # because only members of sig groups can upload to the lookaside
+            # anyways
+            continue
+
         if re.match("{0}.*".format(group), branchname):
+            print >>sys.stderr, "Matched {} against {}".format(group,
+                                                               branchname)
             return True
 
-    branchacl = []
-    # The ACL might be defined by a glob, search for the right entry here
-    matching_acls = [acl_match for acl_match in auth_tags if fnmatch.fnmatch(branchname, acl_match)]
-    print >> sys.stderr, matching_acls
-
-    possible_groups = []
-    for acl in matching_acls:
-        # If _any_ of the protected-branch ACLs match our branch name bail
-        # out quickly
-        if 'None' in auth_tags[acl]:
-            return False
-        possible_groups.extend(auth_tags[acl])
-
-    for group in possible_groups:
-        try:
-            if username in config['team'][group]['user']:
-                return True
-        except KeyError:
-            print >> sys.stderr, '[group={0}] group or user entries do not exist'.format(group)
     return False
 
 def get_memberships(username):
