@@ -139,21 +139,24 @@ def check_auth(username, branchname, groupmemberships=None):
 def get_memberships(username):
     import requests
     import json
-    httpresponse = requests.post(conf.get('acls','fas_url')+'user/list',
+    httpresponse = requests.post(conf.get('acls','fas_url')+'/user/list',
                                  {'user_name': conf.get('acls','fas_username'),
                                   'password':  conf.get('acls','fas_password'),
                                   'login':     'Login',
                                   'search':    username,
                                   'fields':
-                                  ['username','group_roles']})
+                                  ['username','group_roles']},
+                                 headers={'Accept':'application/json'},verify=False)
 
     if httpresponse.status_code >= 400:
+        print >>sys.stderr, "Error looking up group memberships. HTTP Error code {}".format(httpresponse.status_code)
         return None
 
     jsonresponse = json.loads(httpresponse.text)
-    usermodel = jsonresponse['people'].extend(jsonresponse['unapproved_people'])[0]
+    usermodel = jsonresponse.get('people',[])
+    usermodel.extend(jsonresponse.get('unapproved_people',[]))
 
-    return usermodel.group_roles
+    return usermodel[0].get('group_roles',[])
 
 
 def check_form(form, var):
