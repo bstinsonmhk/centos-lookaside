@@ -167,17 +167,17 @@ def check_form(form, var):
         send_error('Multiple values given for "%s". Aborting.' % var)
     return ret
 
-def send_email(pkg, sha1, filename, username):
+def send_email(pkg, sha1, filename, username, branch=''):
     text = """A file has been added to the lookaside cache for %(pkg)s:
 
-%(sha1)s  %(filename)s""" % locals()
+%(branch)s %(sha1)s  %(filename)s""" % locals()
     msg = MIMEText(text)
     sender_name = conf.get('mail', 'sender_name')
     sender_email = conf.get('mail', 'sender_email')
     sender = Utils.formataddr((sender_name, sender_email))
     recipient = conf.get('mail', 'recipient')
-    msg['Subject'] = 'File %s uploaded to lookaside cache by %s' % (
-            filename, username)
+    msg['Subject'] = 'File %s uploaded to lookaside cache, branch %s by %s' % (
+            filename, branch, username)
     msg['From'] = sender
     msg['To'] = recipient
     try:
@@ -280,7 +280,7 @@ def main():
     print >> sys.stderr, '[username=%s] Stored %s (%d bytes)' % (username, dest_file, filesize)
     print 'File %s size %d SHA1 %s stored OK' % (filename, filesize, sha1sum)
     if conf.getboolean('mail', 'send_mail'):
-        send_email(name, sha1sum, filename, username)
+        send_email(name, sha1sum, filename, username, branch=branch)
 
 if __name__ == '__main__':
     main()
